@@ -7,7 +7,6 @@ class CreateYAML:
     resources = {}
     outputs = {}
     project = ''
-    ami = None
 
     def __init__(
             self,

@@ -1,3 +1,4 @@
+import json
 import boto3
 from botocore.config import Config
 from inquirer import prompt, Confirm, Text
@@ -23,6 +24,7 @@ class DeployCfn:
         self.project = project
         self.ask_deployment()
         self.input_stack_name()
+        self.create_iam_roles()
         self.deployment(self.name, region)
 
     def ask_deployment(self):
@@ -47,6 +49,65 @@ class DeployCfn:
 
         self.name = prompt(questions=questions, raise_keyboard_interrupt=True)['name']
 
+    def create_iam_roles(self):
+        print('Create the Cloud9 SSM role...')
+
+        client = boto3.client('iam')
+
+        # create `AWSCloud9SSMAccessRole`
+        try:
+            assume_role_policy = {
+                'Version': '2012-10-17',
+                'Statement': [
+                    {
+                        'Effect': 'Allow',
+                        'Principal': {
+                            'Service': [
+                                'cloud9.amazonaws.com',
+                                'ec2.amazonaws.com'
+                            ]
+                        },
+                        'Action': 'sts:AssumeRole'
+                    }
+                ]
+            }
+            client.create_role(
+                Path='/service-role/',
+                RoleName='AWSCloud9SSMAccessRole',
+                AssumeRolePolicyDocument=json.dumps(assume_role_policy),
+            )
+
+        except client.exceptions.EntityAlreadyExistsException:
+            pass
+
+        # attach managed policy to `AWSCloud9SSMAccessRole`
+        try:
+            client.attach_role_policy(
+                RoleName='AWSCloud9SSMAccessRole',
+                PolicyArn='arn:aws:iam::aws:policy/AWSCloud9SSMInstanceProfile',
+            )
+        except client.exceptions.UnmodifiableEntityException:
+            pass
+
+        # create `AWSCloud9SSMInstanceProfile`
+        try:
+            client.create_instance_profile(
+                InstanceProfileName='AWSCloud9SSMInstanceProfile',
+                Path='/cloud9/'
+            )
+
+        except client.exceptions.EntityAlreadyExistsException:
+            pass
+
+        # add `AWSCloud9SSMAccessRole` to `AWSCloud9SSMInstanceProfile`
+        try:
+            client.add_role_to_instance_profile(
+                InstanceProfileName='AWSCloud9SSMInstanceProfile',
+                RoleName='AWSCloud9SSMAccessRole',
+            )
+        except client.exceptions.LimitExceededException:
+            pass
+
     def deployment(self, name, region):
         if self.deploy:  # deploy using cloudformation
             self.client = boto3.client('cloudformation', config=Config(region_name=region))
@@ -54,6 +115,7 @@ class DeployCfn:
                 StackName=name,
                 TemplateBody=self.get_template(),
                 TimeoutInMinutes=15,
+                Capabilities=['CAPABILITY_NAMED_IAM'],
                 Tags=[{'Key': 'Name', 'Value': name}, {'Key': 'project', 'Value': self.project}],
             )
             stack_id = response['StackId']
