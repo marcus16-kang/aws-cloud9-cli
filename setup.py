@@ -23,7 +23,7 @@ requires = [
 
 setup(
     name='aws-cloud9-cli',
-    version='0.1.1',
+    version='0.1.2',
     author='marcus16-kang',
     description='AWS Cloud9 Environment Stack Generator',
     author_email='marcus16-kang@outlook.com',
