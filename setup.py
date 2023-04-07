@@ -3,7 +3,7 @@ from setuptools import setup, find_packages
 requires = [
     'ansicon==1.89.0',
     'aws-cloudformation-visualizer==0.0.2',
-    'blessed==1.19.1',
+    'blessed==1.20.0',
     'boto3==1.26.104',
     'botocore==1.29.104',
     'inquirer==3.1.3',
@@ -23,7 +23,7 @@ requires = [
 
 setup(
     name='aws-cloud9-cli',
-    version='0.1.5',
+    version='0.1.6',
     author='marcus16-kang',
     description='AWS Cloud9 Environment Stack Generator',
     author_email='marcus16-kang@outlook.com',
@@ -35,7 +35,7 @@ setup(
     },
     install_requires=requires,
     # packages=find_packages(),
-    python_requires='>=3.7',
+    python_requires='>=3.8',
     url='https://github.com/marcus16-kang/aws-cloud9-cli',
     project_urls={
         'Source': 'https://github.com/marcus16-kang/aws-cloud9-cli'
