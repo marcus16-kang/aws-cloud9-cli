@@ -1,17 +1,19 @@
+import sys
+
+import ipaddress
+import boto3
+from botocore.exceptions import ProfileNotFound
 from inquirer import prompt, List, Text
 
-import boto3
-from botocore.config import Config
-from botocore import session
-
 from cloud9_cli.create_yaml import CreateYAML
-from cloud9_cli.utils import print_figlet
+from cloud9_cli.utils import print_figlet, bright_cyan
 from cloud9_cli.validators import name_validator, instance_type_validator, owner_arn_validator
 from cloud9_cli.deploy_cfn import DeployCfn
 
 
 class Command:
     # variables
+    session: boto3.Session = None
     project = None
     region = None
     environment_name = None
@@ -21,11 +23,13 @@ class Command:
     vpc = None
     subnet = None
 
-    def __init__(self):
+    def __init__(self, profile):
         print_figlet()
 
+        self.create_boto3_session(profile)
+        self.print_profile(profile)
         self.set_project_name()
-        self.choose_region()
+        self.choose_region(profile)
         self.set_environment_name()
 
         self.get_instance_type()
@@ -57,9 +61,41 @@ class Command:
         )
         yaml_file.create_yaml()
 
-        DeployCfn(region=self.region, project=self.project)
+        DeployCfn(region=self.region, project=self.project, profile=profile)
 
-    def set_project_name(self):
+    def create_boto3_session(self, profile='default') -> None:
+        """
+        Create boto3 session before query using profile argument.
+
+        :param profile:
+        :return:
+        """
+
+        try:
+            self.session = boto3.session.Session(profile_name=profile)
+
+        except ProfileNotFound as e:
+            print(e)
+
+            sys.exit(1)
+
+    def print_profile(self, profile='default') -> None:
+        """
+        Print profile to console.
+
+        :param profile:
+        :return:
+        """
+
+        print(f'Using AWS Profile {bright_cyan(profile)}')
+
+    def set_project_name(self) -> None:
+        """
+        Set project name.
+
+        :return:
+        """
+
         questions = [
             Text(
                 name='name',
@@ -71,7 +107,13 @@ class Command:
         answer = prompt(questions=questions, raise_keyboard_interrupt=True)
         self.project = answer['name']
 
-    def choose_region(self):
+    def choose_region(self, profile) -> None:
+        """
+        Choose region and create a new session using region name in hard-coded region list.
+
+        :param profile:
+        :return:
+        """
         questions = [
             List(
                 name='region',
@@ -100,8 +142,15 @@ class Command:
 
         answer = prompt(questions=questions, raise_keyboard_interrupt=True)
         self.region = answer.get('region')
+        self.session = boto3.Session(profile_name=profile, region_name=self.region)
 
-    def set_environment_name(self):
+    def set_environment_name(self) -> None:
+        """
+        Set Cloud9 environment name.
+
+        :return:
+        """
+
         questions = [
             Text(
                 name='name',
@@ -113,7 +162,13 @@ class Command:
         answer = prompt(questions=questions, raise_keyboard_interrupt=True)
         self.environment_name = answer.get('name')
 
-    def get_instance_type(self):
+    def get_instance_type(self) -> None:
+        """
+        Set Cloud9 environment's instance type.
+
+        :return:
+        """
+
         questions = [
             List(
                 name='type',
@@ -133,7 +188,13 @@ class Command:
 
         self.instance_type = instance_type
 
-    def choose_platform(self):
+    def choose_platform(self) -> None:
+        """
+        Choose Cloud9 environment instance's OS.
+
+        :return:
+        """
+
         questions = [
             List(
                 name='platform',
@@ -150,20 +211,34 @@ class Command:
         self.platform = answer.get('platform')
 
     def set_owner_arn(self):
+        """
+        Set Cloud9 environment's owner arn.
+
+        :return:
+        """
+
         questions = [
             Text(
                 name='arn',
                 message='Enter the owner ARN',
                 validate=lambda _, x: owner_arn_validator(x),
-                default=boto3.client('sts').get_caller_identity()['Arn']
+                default=self.session.client('sts').get_caller_identity()['Arn']
             )
         ]
 
         answer = prompt(questions=questions, raise_keyboard_interrupt=True)
         self.owner_arn = answer.get('arn')
 
-    def choose_vpc(self):
-        response = session.get_session().create_client('ec2', config=Config(region_name=self.region)).describe_vpcs()
+    def choose_vpc(self) -> None:
+        """
+        Choose vpc from chosen region's vpcs.
+
+        It shows sorted vpc list (cidr, id, name).
+
+        :return:
+        """
+
+        response = self.session.client('ec2').describe_vpcs()
 
         if not response['Vpcs']:  # no vpc found in that region
             print('There\'s no any vpcs. Try another region.')
@@ -193,7 +268,15 @@ class Command:
             self.vpc = answer.get('vpc')
 
     def choose_subnet(self):
-        response = session.get_session().create_client('ec2', config=Config(region_name=self.region)).describe_subnets(
+        """
+        Choose subnet from chosen region's subnets.
+
+        It shows sorted subnet list (cidr, az, name, id).
+
+        :return:
+        """
+
+        response = self.session.client('ec2').describe_subnets(
             Filters=[{'Name': 'vpc-id', 'Values': [self.vpc]}]
         )
 
@@ -204,6 +287,7 @@ class Command:
 
         else:
             subnet_list = []
+            subnet_show_list = []
 
             for subnet in response['Subnets']:
                 subnet_id = subnet['SubnetId']
@@ -211,8 +295,15 @@ class Command:
                 cidr = subnet['CidrBlock']
                 name = next((item['Value'] for item in subnet.get('Tags', {}) if item['Key'] == 'Name'), None)
 
-                subnet_show_data = f'{subnet_id} ({cidr}, {az}{f", {name}" if name else ""})'
-                subnet_list.append((subnet_show_data, (subnet_id, az)))
+                subnet_list.append((subnet_id, az, cidr, name))
+
+            subnet_list = sorted(subnet_list,
+                                 key=lambda x: (list(ipaddress.IPv4Network(x[2]).hosts())[0]._ip, x[1], x[3], x[0]),
+                                 reverse=False)
+
+            for subnet in subnet_list:
+                subnet_show_data = f'''{subnet[0]} ({subnet[2]}, {subnet[1]}{f", {subnet[3]}" if subnet[3] else ""})'''
+                subnet_show_list.append((subnet_show_data, (subnet[0], subnet[1])))
 
             questions = [
                 List(
