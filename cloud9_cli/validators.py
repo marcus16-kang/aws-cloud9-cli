@@ -1,7 +1,7 @@
 import re
 import boto3
-from botocore.exceptions import ClientError
-from botocore.config import Config
+from botocore.exceptions import ClientError, ProfileNotFound
+from inquirer.errors import ValidationError
 
 INSTANCE_LIST = [
     't2.micro',
@@ -66,13 +66,17 @@ def owner_arn_validator(text):
         string=text)
 
 
-def stack_name_validator(text, region):
+def stack_name_validator(text, region, profile='default'):
     if not re.match(pattern=r'^[a-zA-Z][-a-zA-Z0-9]*$', string=text):
         return False
 
     else:
         try:
-            boto3.client('cloudformation', config=Config(region_name=region)).describe_stacks(StackName=text)
+            boto3.session.Session(profile_name=profile, region_name=region).client('cloudformation') \
+                .describe_stacks(StackName=text)
+
+        except ProfileNotFound as e:
+            raise ValidationError('', reason=e.__str__())
 
         except ClientError:  # stack doest
             return True

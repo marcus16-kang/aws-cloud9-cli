@@ -6,6 +6,7 @@ from prettytable import PrettyTable
 from cfn_visualizer import visualizer
 
 from cloud9_cli.validators import stack_name_validator
+from cloud9_cli.utils import bright_cyan, bright_green, bright_red
 
 
 class DeployCfn:
@@ -19,13 +20,15 @@ class DeployCfn:
             self,
             region,
             project,
+            profile
     ):
         self.region = region
         self.project = project
+        self.profile = profile
         self.ask_deployment()
         self.input_stack_name()
         self.create_iam_roles()
-        self.deployment(self.name, region)
+        self.deployment(self.name, region, profile)
 
     def ask_deployment(self):
         questions = [
@@ -43,7 +46,7 @@ class DeployCfn:
             Text(
                 name='name',
                 message='Type CloudFormation Stack name',
-                validate=lambda _, x: stack_name_validator(x, self.region),
+                validate=lambda _, x: stack_name_validator(x, self.region, self.profile),
             )
         ]
 
@@ -108,9 +111,9 @@ class DeployCfn:
         except client.exceptions.LimitExceededException:
             pass
 
-    def deployment(self, name, region):
+    def deployment(self, name, region, profile='default'):
         if self.deploy:  # deploy using cloudformation
-            self.client = boto3.client('cloudformation', config=Config(region_name=region))
+            self.client = boto3.session.Session(profile_name=profile, region_name=region).client('cloudformation')
             response = self.client.create_stack(
                 StackName=name,
                 TemplateBody=self.get_template(),
@@ -130,29 +133,27 @@ class DeployCfn:
                 if stack_status in ['CREATE_FAILED', 'ROLLBACK_FAILED',
                                     'ROLLBACK_COMPLETE']:  # create failed
                     print()
-                    print('\x1b[31m' + 'Failed!' + '\x1b[0m')
+                    print(f'{bright_red("Failed!")}')
                     print()
-                    print('\x1b[31m' + 'Please check CloudFormation at here:' + '\x1b[0m')
+                    print(f'{bright_red("Please check CloudFormation at here:")}')
                     print()
                     print(
-                        '\x1b[31m' +
-                        'https://{0}.console.aws.amazon.com/cloudformation/home?region={0}#/stacks/stackinfo?stackId={1}'.format(
-                            region, stack_id) +
-                        '\x1b[0m')
+                        f'{bright_red(f"https://{region}.console.aws.amazon.com/cloudformation/home?region={region}#/stacks/stackinfo?stackId={stack_id}")}')
+
                     break
 
                 elif stack_status == 'CREATE_COMPLETE':  # create complete successful
                     print()
                     self.print_table()
-                    print('\x1b[32m' + 'Success!' + '\x1b[0m')
+                    print(f'{bright_green("Success!")}')
                     print()
-                    print('\x1b[32m' + 'You can access IDE in here:' + '\x1b[0m')
+                    print(f'{bright_green("You can access IDE in here:")}')
                     print()
                     url = next((item['OutputValue'] for item in
                                 boto3.client('cloudformation', config=Config(region_name=region)).describe_stacks(
                                     StackName=name)['Stacks'][0]['Outputs'] if item['OutputKey'] == 'EnvironmentUrl'),
                                False)
-                    print('\x1b[32m' + url + '\x1b[0m')
+                    print(f'{bright_green(url)}')
 
                     break
 
